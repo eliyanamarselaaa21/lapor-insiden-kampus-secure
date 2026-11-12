@@ -23,6 +23,7 @@ import { revalidatePath } from "next/cache";
 import { StatusLaporan, KategoriInsiden } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireAdmin, getClientIp } from "@/lib/session";
+import { verifySameOrigin } from "@/lib/csrf";
 import {
   createReportSchema,
   updateStatusSchema,
@@ -44,6 +45,14 @@ export async function createReportAction(
   prevState: ReportActionResult | null,
   formData: FormData
 ): Promise<ReportActionResult> {
+  // Validasi Same-Origin (Pertahanan Tambahan Anti-CSRF)
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi manipulasi lintas situs (CSRF).",
+    };
+  }
+
   const session = await requireAuth();
   const clientIp = getClientIp();
 
@@ -113,6 +122,13 @@ export async function updateReportUserAction(
   reportId: string,
   formData: FormData
 ): Promise<ReportActionResult> {
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi manipulasi lintas situs (CSRF).",
+    };
+  }
+
   const session = await requireAuth();
   const clientIp = getClientIp();
 
@@ -215,6 +231,13 @@ export async function updateReportUserAction(
  * 3. USER: MENGHAPUS LAPORAN MILIK SENDIRI (HANYA BISA JIKA STATUS == BARU)
  */
 export async function deleteReportUserAction(reportId: string): Promise<ReportActionResult> {
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi manipulasi lintas situs (CSRF).",
+    };
+  }
+
   const session = await requireAuth();
   const clientIp = getClientIp();
 
@@ -288,6 +311,13 @@ export async function updateStatusAdminAction(
   reportId: string,
   formData: FormData
 ): Promise<ReportActionResult> {
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi manipulasi lintas situs (CSRF).",
+    };
+  }
+
   const session = await requireAdmin(); // Wajib ADMIN
   const clientIp = getClientIp();
 
@@ -354,6 +384,13 @@ export async function updateStatusAdminAction(
  * 5. ADMIN: MENGHAPUS LAPORAN MANA PUN
  */
 export async function deleteReportAdminAction(reportId: string): Promise<ReportActionResult> {
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi manipulasi lintas situs (CSRF).",
+    };
+  }
+
   const session = await requireAdmin(); // Wajib ADMIN
   const clientIp = getClientIp();
 

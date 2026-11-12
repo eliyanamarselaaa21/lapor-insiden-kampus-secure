@@ -28,6 +28,7 @@ import { hashPassword, verifyPassword } from "@/lib/password";
 import { signToken, SESSION_COOKIE_OPTIONS, SESSION_COOKIE_NAME, verifyToken } from "@/lib/jwt";
 import { registerSchema, loginSchema, type RegisterInput, type LoginInput } from "@/lib/validations";
 import { getClientIp } from "@/lib/session";
+import { verifySameOrigin } from "@/lib/csrf";
 
 // Tipe respons standar untuk komunikasi Server Action ke Client Form
 export interface AuthActionResult {
@@ -51,6 +52,14 @@ export async function registerAction(
   prevState: AuthActionResult | null,
   formData: FormData
 ): Promise<AuthActionResult> {
+  // Pertahanan CSRF Lapis Tambahan: Validasi Same-Origin
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi serangan Cross-Site Request Forgery (CSRF).",
+    };
+  }
+
   const rawData: Record<string, unknown> = {
     nama: formData.get("nama"),
     email: formData.get("email"),
@@ -128,6 +137,14 @@ export async function loginAction(
   prevState: AuthActionResult | null,
   formData: FormData
 ): Promise<AuthActionResult> {
+  // Pertahanan CSRF Lapis Tambahan: Validasi Same-Origin
+  if (!verifySameOrigin()) {
+    return {
+      success: false,
+      message: "Permintaan ditolak: Indikasi serangan Cross-Site Request Forgery (CSRF).",
+    };
+  }
+
   const rawData: Record<string, unknown> = {
     email: formData.get("email"),
     password: formData.get("password"),

@@ -1,5 +1,9 @@
-// Skema Prisma Database untuk SIPEKAN (Sistem Pelaporan Insiden & Keamanan Kampus)
-// Sesuai Aturan: PostgreSQL (Neon), query parameterized melalui Prisma Client
+// ===================================================================
+// Skema Prisma Database untuk SIPEKAN
+// Sistem Pelaporan Insiden Keamanan & Pelanggaran Kampus
+// Target Database: PostgreSQL (Neon Serverless)
+// Keamanan: Zero Raw-SQL, Sanitized ORM Query, Role-Based Access Control
+// ===================================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -10,79 +14,91 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// -------------------------------------------------------------------
+// ENUMS (Standarisasi Nilai Tetap & Pencegah Input Sembarangan)
+// -------------------------------------------------------------------
+
 // Peran Pengguna (Role-Based Access Control / RBAC)
 enum Role {
-  USER  // Mahasiswa atau Staf Kampus (Pelapor)
   ADMIN // Tim Keamanan / Petugas Investigasi Kampus
+  USER  // Mahasiswa atau Staf Kampus (Pelapor)
 }
 
-// Kategori Insiden Keamanan & Pelanggaran Kampus
-enum IncidentCategory {
-  PENCURIAN_KEHILANGAN    // Kehilangan laptop, dompet, kendaraan, dsb.
-  PELANGGARAN_TATA_TERTIB // Pelanggaran jam malam, miras, perusakan fasilitas
-  INSIDEN_SIBER_IT        // Phishing, akun kampus diretas, kebocoran data, malware
-  KEKERASAN_PELECEHAN     // Ancaman fisik, bullying, pelecehan
-  FASILITAS_BAHAYA        // Titik rawan, lampu mati, bahaya kelistrikan
-  LAINNYA
+// Kategori Pelaporan Insiden di Lingkungan Kampus
+enum KategoriInsiden {
+  KEHILANGAN  // Kehilangan barang, pencurian (laptop, motor, helm, dompet, dll.)
+  PELANGGARAN // Pelanggaran tata tertib kampus, narkoba/miras, perusakan fasilitas
+  SIBER       // Insiden siber (phishing, peretasan akun kampus, ransomware, data leak)
+  LAINNYA     // Insiden keamanan fisik lainnya / situasi darurat kampus
 }
 
-// Status Alur Penanganan Insiden
-enum IncidentStatus {
-  MENUNGGU // Laporan baru masuk, menunggu verifikasi
-  DIPROSES // Sedang diinvestigasi oleh petugas keamanan
-  SELESAI  // Laporan telah ditindaklanjuti & selesai
-  DITOLAK  // Laporan tidak valid atau tidak cukup bukti
+// Alur Status Penanganan Laporan Insiden
+enum StatusLaporan {
+  BARU     // Laporan baru dikirim oleh pelapor, belum diverifikasi petugas
+  DIPROSES // Laporan valid dan sedang ditangani/diinvestigasi oleh petugas keamanan
+  SELESAI  // Tindakan pengamanan/penyelesaian telah selesai dilakukan
 }
 
-// Tabel Pengguna
+// -------------------------------------------------------------------
+// MODELS (Tabel Database)
+// -------------------------------------------------------------------
+
+// 1. Model Pengguna (User)
 model User {
   id           String           @id @default(cuid())
-  name         String
-  email        String           @unique
-  nimNip       String?          // Nomor Induk Mahasiswa atau NIP Pegawai
-  password     String           // Password HASH bcrypt (BUKAN plain text)
-  role         Role             @default(USER)
+  nama         String           // Nama lengkap mahasiswa/staf
+  email        String           @unique // Email kampus unik (digunakan untuk login)
+  passwordHash String           // Hasil enkripsi hash bcrypt (Bukan plain text!)
+  role         Role             @default(USER) // Default role adalah USER (prinsip Least Privilege)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
+
+  // Relasi: 1 Pengguna dapat membuat banyak Laporan Insiden (1-to-N)
   reports      IncidentReport[]
-  auditLogs    AuditLog[]
+
+  // Relasi: 1 Pengguna dapat memiliki banyak jejak log aktivitas (1-to-N)
+  activityLogs ActivityLog[]
 
   @@map("users")
 }
 
-// Tabel Laporan Insiden
+// 2. Model Laporan Insiden (IncidentReport)
 model IncidentReport {
-  id           String           @id @default(cuid())
-  title        String
-  description  String
-  category     IncidentCategory @default(LAINNYA)
-  location     String           // Lokasi kejadian (e.g., Gedung Perpustakaan Lt. 2)
-  incidentDate DateTime         // Waktu perkiraan terjadinya insiden
-  status       IncidentStatus   @default(MENUNGGU)
-  evidenceUrl  String?          // Tautan bukti/foto pendukung (opsional)
-  adminNotes   String?          // Catatan penanganan dari Petugas/Admin
-  reporterId   String
-  reporter     User             @relation(fields: [reporterId], references: [id], onDelete: Cascade)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  id           String          @id @default(cuid())
+  judul        String          // Ringkasan singkat insiden
+  deskripsi    String          @db.Text // Kronologi lengkap dan detail kejadian
+  lokasi       String          // Lokasi spesifik kejadian di lingkungan kampus
+  kategori     KategoriInsiden @default(LAINNYA) // Kategori insiden
+  status       StatusLaporan   @default(BARU) // Status penanganan awal selalu BARU
+  catatanAdmin String?         @db.Text // Catatan investigasi / tindak lanjut petugas keamanan
+  
+  // Relasi ke tabel User (Pelapor)
+  userId       String
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
-  @@index([reporterId])
+  // Index untuk mempercepat query pencarian dan penyaringan data di dashboard
+  @@index([userId])
   @@index([status])
-  @@index([category])
+  @@index([kategori])
   @@map("incident_reports")
 }
 
-// Tabel Audit Log (Pencatatan Jejak Keamanan Sistem)
-model AuditLog {
+// 3. Model Log Aktivitas Keamanan (ActivityLog / Audit Log)
+// Digunakan untuk investigasi forensik dan audit trail keamanan sistem siber
+model ActivityLog {
   id        String   @id @default(cuid())
-  action    String   // Contoh: LOGIN_SUCCESS, LOGIN_FAILED, REPORT_CREATED, STATUS_UPDATED
-  details   String?  // Keterangan tambahan (tanpa memuat data sensitif)
-  ipAddress String?  // Alamat IP client saat aksi dilakukan
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId    String?  // Opsional (Bisa null jika aksi dilakukan sebelum login/gagal autentikasi)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull) // Jika user dihapus, log tetap tersimpan
+  aksi      String   // Kode aksi (e.g. AUTH_LOGIN_SUCCESS, REPORT_CREATE, STATUS_UPDATE)
+  detail    String?  @db.Text // Deskripsi aktivitas (tanpa menyimpan kredensial sensitif)
+  ip        String?  // Alamat IP klien pengirim request untuk deteksi ancaman
   createdAt DateTime @default(now())
 
+  // Index untuk pencarian log berdasarkan user atau jenis aksi
   @@index([userId])
-  @@index([action])
-  @@map("audit_logs")
+  @@index([aksi])
+  @@map("activity_logs")
 }

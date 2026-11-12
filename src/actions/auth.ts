@@ -6,19 +6,18 @@
 // ALASAN KEAMANAN (Materi Demo Cyber Security):
 // 1. Eksekusi 100% di Sisi Server (Next.js Server Actions):
 //    Seluruh logika validasi, pengecekan database, dan manipulasi token berjalan
-//    di lingkungan server terisolasi. Kunci rahasia dan logika hashing tidak
-//    pernah dikirimkan ke peramban (browser) pengguna.
-// 2. Pencegahan User Enumeration (CWE-204):
-//    Saat login gagal, sistem tidak pernah memberitahukan apakah email terdaftar
-//    atau tidak. Pesan kegagalan selalu identik ("Email atau kata sandi salah.").
-//    Selain itu, kita menggunakan teknik perbandingan hash semu (Dummy Hash)
-//    untuk menyamakan waktu respons (Timing Attack Mitigation).
-// 3. Pencegahan Privilege Escalation / Mass Assignment:
+//    di lingkungan server terisolasi.
+// 2. Mekanisme Rate Limiting Berbasis Database (Brute-Force & Credential Stuffing Defense):
+//    Maksimal 5 percobaan gagal dalam rentang 15 menit per kombinasi email & IP.
+//    Jika terlampaui, request langsung ditolak dengan status LOGIN_BLOCKED.
+// 3. Pencegahan User Enumeration (CWE-204) & Timing Attack:
+//    Pesan kegagalan login selalu identik ("Email atau kata sandi salah.").
+//    Penggunaan DUMMY_HASH menjaga kestabilan waktu komputasi.
+// 4. Pencegahan Privilege Escalation / Mass Assignment:
 //    Fungsi registrasi mengunci peran pengguna secara mutlak ke 'USER'.
-//    Tidak ada celah bagi pengguna baru untuk menyusupkan peran 'ADMIN'.
-// 4. Rekam Jejak Audit Keamanan Otomatis (Security Audit Trail):
-//    Setiap kejadian penting (REGISTER, LOGIN_SUCCESS, LOGIN_FAILED, LOGOUT)
-//    langsung dicatat ke database lengkap dengan stempel waktu dan alamat IP.
+// 5. Rekam Jejak Audit Keamanan Otomatis (Security Audit Trail):
+//    Setiap kejadian (REGISTER, LOGIN_SUCCESS, LOGIN_FAILED, LOGIN_BLOCKED, LOGOUT)
+//    langsung dicatat ke tabel ActivityLog lengkap dengan timestamp dan IP.
 // ===================================================================
 
 import { cookies } from "next/headers";
@@ -37,6 +36,10 @@ export interface AuthActionResult {
   errors?: Record<string, string[]>;
   redirectTo?: string;
 }
+
+// Konfigurasi Rate Limiting Keamanan
+const RATE_LIMIT_WINDOW_MINUTES = 15;
+const MAX_FAILED_ATTEMPTS = 5;
 
 // Hash dummy untuk mitigasi Timing Attack saat email tidak ditemukan di database
 const DUMMY_HASH = "$2a$12$e8uq8MRJp2r50/jZ/UqJ8O7rX6E/KzM6P9M8f0Q8f6E8q8f6E8q8f";
@@ -119,7 +122,7 @@ export async function registerAction(
 }
 
 /**
- * 2. SERVER ACTION: LOGIN PENGGUNA (MAHASISWA / ADMIN KEAMANAN)
+ * 2. SERVER ACTION: LOGIN PENGGUNA DENGAN RATE LIMITING
  */
 export async function loginAction(
   prevState: AuthActionResult | null,
@@ -144,6 +147,41 @@ export async function loginAction(
   const clientIp = getClientIp();
 
   try {
+    // ===============================================================
+    // PENGECEKAN RATE LIMITING (Perlindungan Brute-Force & Credential Stuffing)
+    // Hitung kegagalan login dalam 15 menit terakhir untuk kombinasi IP & email ini
+    // ===============================================================
+    const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000);
+
+    const recentFailedCount = await prisma.activityLog.count({
+      where: {
+        aksi: "LOGIN_FAILED",
+        ip: clientIp,
+        detail: {
+          contains: email,
+        },
+        createdAt: {
+          gte: windowStart,
+        },
+      },
+    });
+
+    if (recentFailedCount >= MAX_FAILED_ATTEMPTS) {
+      // Catat pemblokiran percobaan login karena melebihi batas rate limit
+      await prisma.activityLog.create({
+        data: {
+          aksi: "LOGIN_BLOCKED",
+          detail: `Upaya login diblokir otomatis oleh Rate Limiter (${recentFailedCount} kegagalan) untuk email: ${email}`,
+          ip: clientIp,
+        },
+      });
+
+      return {
+        success: false,
+        message: `Terlalu banyak percobaan login yang gagal. Demi keamanan, akses dibatasi sementara. Silakan tunggu ${RATE_LIMIT_WINDOW_MINUTES} menit sebelum mencoba kembali.`,
+      };
+    }
+
     // Cari akun berdasarkan email
     const user = await prisma.user.findUnique({
       where: { email },
@@ -151,27 +189,32 @@ export async function loginAction(
 
     // MITIGASI TIMING ATTACK & USER ENUMERATION:
     // Jika email tidak ada di database, tetap jalankan bcrypt.compare dengan DUMMY_HASH.
-    // Hal ini membuat durasi respons identik sehingga penyerang tidak bisa mengukur waktu komputasi.
     const isPasswordValid = user
       ? await verifyPassword(password, user.passwordHash)
       : await verifyPassword(password, DUMMY_HASH).catch(() => false);
 
     // Jika user tidak ditemukan ATAU password salah:
     if (!user || !isPasswordValid) {
-      // Catat log kegagalan login untuk mendeteksi potensi serangan brute force
+      // Catat log kegagalan login ke tabel ActivityLog
       await prisma.activityLog.create({
         data: {
           aksi: "LOGIN_FAILED",
-          detail: `Upaya login gagal untuk identitas: ${email}`,
+          detail: `Percobaan login gagal untuk email: ${email}`,
           ip: clientIp,
           userId: user ? user.id : null,
         },
       });
 
+      const remainingAttempts = MAX_FAILED_ATTEMPTS - (recentFailedCount + 1);
+      const remainingNotice =
+        remainingAttempts > 0 && remainingAttempts <= 2
+          ? ` (Peringatan: sisa ${remainingAttempts} percobaan sebelum akun dibatasi sementara)`
+          : "";
+
       // Pesan error umum: Mencegah penyerang mengetahui apakah email valid atau tidak
       return {
         success: false,
-        message: "Email atau kata sandi salah. Silakan periksa kembali.",
+        message: `Email atau kata sandi salah. Silakan periksa kembali.${remainingNotice}`,
       };
     }
 
@@ -223,7 +266,6 @@ export async function logoutAction() {
   if (token) {
     const session = await verifyToken(token);
     if (session) {
-      // Catat aktivitas logout ke dalam database
       try {
         await prisma.activityLog.create({
           data: {

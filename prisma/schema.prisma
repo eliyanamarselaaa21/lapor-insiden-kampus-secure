@@ -1,0 +1,88 @@
+// Skema Prisma Database untuk SIPEKAN (Sistem Pelaporan Insiden & Keamanan Kampus)
+// Sesuai Aturan: PostgreSQL (Neon), query parameterized melalui Prisma Client
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Peran Pengguna (Role-Based Access Control / RBAC)
+enum Role {
+  USER  // Mahasiswa atau Staf Kampus (Pelapor)
+  ADMIN // Tim Keamanan / Petugas Investigasi Kampus
+}
+
+// Kategori Insiden Keamanan & Pelanggaran Kampus
+enum IncidentCategory {
+  PENCURIAN_KEHILANGAN    // Kehilangan laptop, dompet, kendaraan, dsb.
+  PELANGGARAN_TATA_TERTIB // Pelanggaran jam malam, miras, perusakan fasilitas
+  INSIDEN_SIBER_IT        // Phishing, akun kampus diretas, kebocoran data, malware
+  KEKERASAN_PELECEHAN     // Ancaman fisik, bullying, pelecehan
+  FASILITAS_BAHAYA        // Titik rawan, lampu mati, bahaya kelistrikan
+  LAINNYA
+}
+
+// Status Alur Penanganan Insiden
+enum IncidentStatus {
+  MENUNGGU // Laporan baru masuk, menunggu verifikasi
+  DIPROSES // Sedang diinvestigasi oleh petugas keamanan
+  SELESAI  // Laporan telah ditindaklanjuti & selesai
+  DITOLAK  // Laporan tidak valid atau tidak cukup bukti
+}
+
+// Tabel Pengguna
+model User {
+  id           String           @id @default(cuid())
+  name         String
+  email        String           @unique
+  nimNip       String?          // Nomor Induk Mahasiswa atau NIP Pegawai
+  password     String           // Password HASH bcrypt (BUKAN plain text)
+  role         Role             @default(USER)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  reports      IncidentReport[]
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+// Tabel Laporan Insiden
+model IncidentReport {
+  id           String           @id @default(cuid())
+  title        String
+  description  String
+  category     IncidentCategory @default(LAINNYA)
+  location     String           // Lokasi kejadian (e.g., Gedung Perpustakaan Lt. 2)
+  incidentDate DateTime         // Waktu perkiraan terjadinya insiden
+  status       IncidentStatus   @default(MENUNGGU)
+  evidenceUrl  String?          // Tautan bukti/foto pendukung (opsional)
+  adminNotes   String?          // Catatan penanganan dari Petugas/Admin
+  reporterId   String
+  reporter     User             @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([reporterId])
+  @@index([status])
+  @@index([category])
+  @@map("incident_reports")
+}
+
+// Tabel Audit Log (Pencatatan Jejak Keamanan Sistem)
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String   // Contoh: LOGIN_SUCCESS, LOGIN_FAILED, REPORT_CREATED, STATUS_UPDATED
+  details   String?  // Keterangan tambahan (tanpa memuat data sensitif)
+  ipAddress String?  // Alamat IP client saat aksi dilakukan
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}

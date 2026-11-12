@@ -94,26 +94,6 @@ Salin berkas template `.env.example` menjadi `.env`:
 ```bash
 cp .env.example .env
 ```
-Buka file `.env` dan lengkapi nilainya:
-```env
-# URL Database PostgreSQL dari Neon (Gunakan mode pooled)
-DATABASE_URL="postgresql://username:password@ep-sample-pooler.region.aws.neon.tech/neondb?sslmode=require"
-
-# Kunci rahasia JWT minimal 32 karakter
-# Generate di terminal: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-JWT_SECRET="masukkan_string_rahasia_acak_minimal_32_karakter_di_sini"
-
-NODE_ENV="development"
-
-# Kredensial Akun Seeding untuk Demo
-SEED_ADMIN_NAME="Komandan Keamanan Kampus"
-SEED_ADMIN_EMAIL="admin.keamanan@kampus.ac.id"
-SEED_ADMIN_PASSWORD="PasswordAdminKuat123!"
-
-SEED_USER_NAME="Mahasiswa Pelapor"
-SEED_USER_EMAIL="mahasiswa@kampus.ac.id"
-SEED_USER_PASSWORD="PasswordUserKuat123!"
-```
 
 ### 5. Jalankan Migrasi Database & Seeding
 ```bash
@@ -138,10 +118,14 @@ Buka peramban di: `http://localhost:3000`.
 
 ---
 
-## 🤖 Pemanfaatan AI Agent (Google Antigravity)
+## 🤖 Pemanfaatan AI Agent & Ringkasan Self-Testing
 
-Proyek ini dikembangkan secara kolaboratif menggunakan **Google Antigravity** sebagai *pair programmer* dan *security engineer mentor*. Seluruh kode, konfigurasi keamanan, dan hasil pengujian telah diverifikasi secara deterministik melalui:
-- Audit tipe data ketat: `npx tsc --noEmit` (0 error).
-- Uji build kompilasi produksi: `npm run build` (100% lulus).
-- Pemindaian kerentanan eksternal: [securityheaders.com](https://securityheaders.com) (Grade A).
-- Verifikasi langsung melalui antarmuka browser DevTools dan Prisma Studio.
+Proyek ini dikembangkan secara bertahap menggunakan **Google Antigravity** sebagai *pair programmer* dan *security engineer mentor* tanpa pernah membagikan kredensial rahasia ke dalam *prompt*. Seluruh kode dan konfigurasi keamanan telah diverifikasi melalui pengujian mandiri (*self-testing*):
+
+- **Audit Kode & Build:** `npx tsc --noEmit` (0 error) dan `npm run build` (100% lulus).
+- **Pemindaian HTTP Security Headers:** Mendapatkan skor **Grade A** di [securityheaders.com](https://securityheaders.com) dengan konfigurasi CSP, HSTS, `X-Frame-Options: DENY`, dan `X-Content-Type-Options: nosniff`.
+- **Uji Celah Keamanan (OWASP Top 10):**
+  - *SQL Injection & Stored XSS:* Ditolak/ter-escape otomatis oleh Prisma ORM dan React JSX.
+  - *Broken Access Control & IDOR:* Rute `/admin` terlindungi di Edge Middleware dan mutasi laporan divalidasi kepemilikannya (`existing.userId === session.userId`) di server dengan pencatatan `SECURITY_IDOR_ATTEMPT`.
+  - *Autentikasi & Rate Limiting:* Kebijakan password kuat (`bcrypt` cost 12), cookie sesi `HttpOnly + Secure + SameSite=Lax`, serta pemblokiran login otomatis setelah 5 kali gagal dalam 15 menit.
+  - *Audit Secret & Dependensi:* Pemeriksaan `git log` memastikan nol kebocoran kredensial; hasil `npm audit` dievaluasi dengan *Contextual Risk Acceptance*.
